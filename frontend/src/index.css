@@ -1,0 +1,245 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ---- OpenDroid terminal theme ---- */
+:root {
+    --od-bg: #04070a;
+    --od-panel: #0a1015;
+    --od-panel-2: #0f1720;
+    --od-border: #1a2530;
+    --od-border-hot: #204050;
+    --od-green: #00ff66;
+    --od-green-dim: #0d803a;
+    --od-cyan: #00f0ff;
+    --od-cyan-dim: #087280;
+    --od-amber: #ffb454;
+    --od-red: #ff3b6b;
+    --od-mute: #4a5b6a;
+    --od-text: #d6f0ea;
+    --od-text-dim: #7a8f96;
+}
+
+@layer base {
+    :root {
+        --background: 200 45% 3%;
+        --foreground: 160 40% 92%;
+        --card: 205 38% 6%;
+        --card-foreground: 160 40% 92%;
+        --popover: 205 38% 6%;
+        --popover-foreground: 160 40% 92%;
+        --primary: 141 100% 50%;
+        --primary-foreground: 200 45% 3%;
+        --secondary: 205 35% 10%;
+        --secondary-foreground: 160 40% 92%;
+        --muted: 205 30% 12%;
+        --muted-foreground: 195 15% 55%;
+        --accent: 180 100% 50%;
+        --accent-foreground: 200 45% 3%;
+        --destructive: 348 100% 62%;
+        --destructive-foreground: 0 0% 100%;
+        --border: 205 30% 15%;
+        --input: 205 30% 12%;
+        --ring: 141 100% 50%;
+        --radius: 0.15rem;
+    }
+}
+
+@layer base {
+    * {
+        @apply border-border;
+    }
+    html,
+    body,
+    #root {
+        height: 100%;
+    }
+    body {
+        margin: 0;
+        background:
+            radial-gradient(
+                1200px 800px at 15% -10%,
+                rgba(0, 255, 102, 0.06),
+                transparent 60%
+            ),
+            radial-gradient(
+                1000px 700px at 90% 110%,
+                rgba(0, 240, 255, 0.05),
+                transparent 55%
+            ),
+            var(--od-bg);
+        color: var(--od-text);
+        font-family:
+            "JetBrains Mono",
+            "Fira Code",
+            ui-monospace,
+            SFMono-Regular,
+            Menlo,
+            monospace;
+        font-feature-settings: "ss01", "cv02", "cv11";
+        -webkit-font-smoothing: antialiased;
+    }
+    ::selection {
+        background: rgba(0, 255, 102, 0.25);
+        color: #fff;
+    }
+    /* Terminal grid backdrop */
+    body::before {
+        content: "";
+        position: fixed;
+        inset: 0;
+        pointer-events: none;
+        background-image: linear-gradient(
+                rgba(0, 240, 255, 0.035) 1px,
+                transparent 1px
+            ),
+            linear-gradient(90deg, rgba(0, 240, 255, 0.035) 1px, transparent 1px);
+        background-size: 48px 48px;
+        mask-image: radial-gradient(
+            ellipse at center,
+            black 40%,
+            transparent 85%
+        );
+        z-index: 0;
+    }
+}
+
+/* ---- scan-line + noise ---- */
+.od-scanlines {
+    position: relative;
+}
+.od-scanlines::after {
+    content: "";
+    pointer-events: none;
+    position: absolute;
+    inset: 0;
+    background: repeating-linear-gradient(
+        to bottom,
+        rgba(0, 0, 0, 0) 0px,
+        rgba(0, 0, 0, 0) 2px,
+        rgba(0, 255, 102, 0.03) 3px
+    );
+    mix-blend-mode: overlay;
+}
+
+/* ---- shared components ---- */
+.od-panel {
+    background: linear-gradient(180deg, var(--od-panel) 0%, var(--od-panel-2) 100%);
+    border: 1px solid var(--od-border);
+    border-radius: 4px;
+    position: relative;
+}
+.od-panel-hot {
+    border-color: var(--od-border-hot);
+    box-shadow:
+        inset 0 0 0 1px rgba(0, 240, 255, 0.05),
+        0 0 24px -8px rgba(0, 240, 255, 0.15);
+}
+.od-label {
+    font-size: 10px;
+    letter-spacing: 0.22em;
+    text-transform: uppercase;
+    color: var(--od-text-dim);
+}
+.od-mono {
+    font-family:
+        "JetBrains Mono",
+        "Fira Code",
+        ui-monospace,
+        monospace;
+}
+.od-num {
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -0.01em;
+}
+.od-glow-green {
+    color: var(--od-green);
+    text-shadow: 0 0 8px rgba(0, 255, 102, 0.35);
+}
+.od-glow-cyan {
+    color: var(--od-cyan);
+    text-shadow: 0 0 8px rgba(0, 240, 255, 0.4);
+}
+
+/* diode dot */
+.od-diode {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--od-green);
+    box-shadow: 0 0 10px var(--od-green);
+    animation: od-pulse 1.6s ease-in-out infinite;
+}
+.od-diode.red {
+    background: var(--od-red);
+    box-shadow: 0 0 10px var(--od-red);
+}
+.od-diode.amber {
+    background: var(--od-amber);
+    box-shadow: 0 0 10px var(--od-amber);
+}
+@keyframes od-pulse {
+    0%,
+    100% {
+        opacity: 1;
+    }
+    50% {
+        opacity: 0.35;
+    }
+}
+
+@keyframes od-flash-in {
+    from {
+        background: rgba(0, 255, 102, 0.22);
+    }
+    to {
+        background: transparent;
+    }
+}
+.od-flash-in {
+    animation: od-flash-in 1.3s ease-out both;
+}
+
+/* sidebar item */
+.od-nav-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 12px;
+    border-left: 2px solid transparent;
+    color: var(--od-text-dim);
+    transition:
+        color 120ms,
+        border-color 120ms,
+        background 120ms;
+    cursor: pointer;
+    font-size: 12px;
+}
+.od-nav-item:hover {
+    color: var(--od-text);
+    background: rgba(0, 240, 255, 0.04);
+}
+.od-nav-item.active {
+    color: var(--od-green);
+    border-left-color: var(--od-green);
+    background: rgba(0, 255, 102, 0.06);
+}
+
+.od-scroll::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+}
+.od-scroll::-webkit-scrollbar-thumb {
+    background: var(--od-border-hot);
+    border-radius: 4px;
+}
+.od-scroll::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+/* ticker */
+.od-ticker {
+    font-size: 10px;
+    letter-spacing: 0.1em;
+    color: var(--od-text-dim);
+}
