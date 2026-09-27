@@ -1,0 +1,23 @@
+{
+  "summary": "Iteration 3 refactor regression tested. All 23 backend pytest tests pass (17 from iteration_2 + 6 new: /api/state shape+10 networks+dropdashin fields, engine tick advance & earnings monotonic growth, analytics history count>=1, sandbox/flush resets totals & clears history, agents/publish returns post_id+llm, drivers/dropdashin/order not_armed mocked). Frontend regression verified via Playwright: command-center loads, ws:live indicator, 10 nav-* items with nav-instagram active by default, nav-dropdashin switches panel, mode-badge opens graduated-panel, open-swarm opens swarm-panel with all 6 form testids (agent-name/playbook/provider/cadence/spawn-btn/stop-all-btn), publish-input+publish-btn work with success toast + post prepended to feed, niche-select present, chart renders both revenue (green) and imp/sec (cyan) lines. No behavior regressions from the refactor.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_iteration3_refactor.py",
+    "/app/backend/tests/test_iteration2.py",
+    "/app/test_reports/pytest/iteration3.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "useSocket.js now logs on error paths — good. Confirm console.debug volume isn't noisy in production (may want a debug flag).",
+    "useSandboxState hook extraction reduces CommandCenter to ~100 lines; test-ids all preserved.",
+    "SpawnConfig dataclass + **kwargs pattern is clean; consider Pydantic validation on the API layer too since server currently trusts client shape.",
+    "simulation._tick split into 8 helpers preserves behavior (verified: earnings still grow monotonically, all 10 networks tick, dropdashin orders/net_profit still accumulate). Consider adding docstrings on each helper describing invariants (e.g., _maybe_ban side effects on state)."
+  ],
+  "updated_files": ["/app/backend/tests/test_iteration3_refactor.py"],
+  "success_rate": {"backend": "100% (23/23)", "frontend": "100%"},
+  "seed_data_creation": "none — flush test clears state; TEST_ prefixed publish and swarm entities auto-clean.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Run `pytest /app/backend/tests/ -n 0` — xdist parallel breaks swarm cross-test isolation (pytest.ini still forces -n 2 by default). Real-LLM test in test_iteration2.py::TestSwarm::test_real_llm_agent depends on EMERGENT_LLM_KEY in /app/backend/.env and polls ~20s for last_source=='real'. /api/agents/publish returns {post: {post_id: ...}, llm: {content, provider, ...}} — post_id is nested under 'post', not top-level."
+}
