@@ -10,7 +10,7 @@ import { Send, Trash2, Loader2 } from "lucide-react";
  * lets the operator publish new posts through the LLM gateway.
  * Dropdashin gets a bespoke store-inspector panel.
  */
-export default function FeedView({ network, netMeta, snapshotNet, dropdashin }) {
+export default function FeedView({ network, netMeta, snapshotNet, dropdashin, mode, onOpenGraduated }) {
     const [feed, setFeed] = useState([]);
     const [prompt, setPrompt] = useState("");
     const [busy, setBusy] = useState(false);
@@ -131,7 +131,7 @@ export default function FeedView({ network, netMeta, snapshotNet, dropdashin }) 
             {/* Body */}
             <div className="flex-1 overflow-y-auto od-scroll">
                 {isDropdashin ? (
-                    <DropdashinPanel dropdashin={dropdashin} />
+                    <DropdashinPanel dropdashin={dropdashin} mode={mode} onOpenGraduated={onOpenGraduated} />
                 ) : (
                     <FeedList feed={feed} netColor={netMeta?.color} />
                 )}
@@ -288,8 +288,9 @@ function FeedList({ feed, netColor }) {
     );
 }
 
-function DropdashinPanel({ dropdashin }) {
+function DropdashinPanel({ dropdashin, mode, onOpenGraduated }) {
     if (!dropdashin) return null;
+    const isGrad = mode === "graduated";
     return (
         <div className="p-4 space-y-4" data-testid="dropdashin-panel">
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
@@ -349,13 +350,31 @@ function DropdashinPanel({ dropdashin }) {
             </div>
 
             <div className="border border-dashed border-[color:var(--od-border-hot)] p-3 rounded-sm">
-                <div className="od-label mb-1">graduated mode</div>
+                <div className="flex items-center justify-between mb-1">
+                    <div className="od-label">graduated mode</div>
+                    <span
+                        className="od-mono text-[10px] uppercase px-1.5 py-0.5 border rounded-sm"
+                        style={{
+                            borderColor: isGrad ? "#ffb454" : "var(--od-green)",
+                            color: isGrad ? "#ffb454" : "var(--od-green)",
+                        }}
+                    >
+                        {mode || "sandbox"}
+                    </span>
+                </div>
                 <p className="od-mono text-[11px] text-[color:var(--od-text-dim)]">
                     when sandbox → live, the store connects to real dropshipping
                     APIs (product sync, SEO copy, order routing to supplier).
                     OpenDroid-style screen automation kicks in for platforms
                     without APIs.
                 </p>
+                <button
+                    data-testid="open-graduated-btn"
+                    onClick={onOpenGraduated}
+                    className="mt-2 od-mono uppercase text-[10px] px-2 py-1 border border-[color:var(--od-cyan)] text-[color:var(--od-cyan)] hover:bg-[color:var(--od-cyan)] hover:text-black rounded-sm"
+                >
+                    configure drivers
+                </button>
             </div>
         </div>
     );

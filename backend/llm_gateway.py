@@ -1,97 +1,147 @@
 """
 LLM Gateway — hybrid brain for OpenDroid agents.
 
-Supports:
-  - Local:  Ollama / vLLM  (http://localhost:11434/v1)
-  - Remote: OpenAI, Anthropic, Groq  (env-based keys)
-  - Deterministic fallback (no key, no network) — the sandbox stays fully
-    playable without any external LLM.
+Behavior is strictly gated by the global mode manager:
 
-The gateway never blocks the WebSocket loop. It's called on-demand by
-`/api/agents/publish` when the operator asks the agent to think.
+  sandbox   → always the deterministic `sim` synthesizer. Zero network calls,
+              zero credits burned. Safe for practice runs.
+  graduated → if `llm_real` is armed AND EMERGENT_LLM_KEY is set, calls the
+              Emergent Universal Key via emergentintegrations. Otherwise
+              falls back to `sim`.
+
+Providers/models available in graduated mode:
+    openai/gpt-5.4          (default, recommended)
+    anthropic/claude-sonnet-4-6
+    gemini/gemini-3.1-pro-preview
 """
 from __future__ import annotations
 import os
 import random
 import time
+import uuid
 from typing import Optional
 
+from mode import MODE
+
 try:
-    import httpx  # noqa
-    HAS_HTTPX = True
+    from emergentintegrations.llm.chat import LlmChat, UserMessage
+    HAS_EMERGENT = True
 except Exception:
-    HAS_HTTPX = False
+    HAS_EMERGENT = False
 
 
-PROVIDERS = ("ollama", "openai", "anthropic", "groq", "sim")
+DEFAULT_MODELS = {
+    "openai": "gpt-5.4",
+    "anthropic": "claude-sonnet-4-6",
+    "gemini": "gemini-3.1-pro-preview",
+}
+
+
+def _system_prompt(network: str, niche_label: str) -> str:
+    return (
+        f"You are a top-tier social growth agent posting on {network}.\n"
+        f"Niche: {niche_label}. It is August 2026.\n"
+        "Rules:\n"
+        "- Write a single post, max 220 characters.\n"
+        "- Open with a specific hook or number in the first 8 words.\n"
+        "- No emojis at the start. No hashtags. No 'game-changer', "
+        "'10x', 'leverage', 'revolutionary' — those get filtered.\n"
+        "- End with a concrete CTA or receipt (DM keyword, link in bio, etc)."
+    )
 
 
 class LLMGateway:
     def __init__(self) -> None:
-        self.provider = os.environ.get("LLM_PROVIDER", "sim").lower()
-        self.ollama_url = os.environ.get("OLLAMA_URL", "http://localhost:11434/v1")
-        self.ollama_model = os.environ.get("OLLAMA_MODEL", "llama3")
+        self.emergent_key = os.environ.get("EMERGENT_LLM_KEY", "")
+        # optional user-supplied keys (bypass Emergent, not used in MVP)
         self.openai_key = os.environ.get("OPENAI_API_KEY", "")
         self.anthropic_key = os.environ.get("ANTHROPIC_API_KEY", "")
         self.groq_key = os.environ.get("GROQ_API_KEY", "")
-        self.emergent_key = os.environ.get("EMERGENT_LLM_KEY", "")
+        self.ollama_url = os.environ.get("OLLAMA_URL", "http://localhost:11434/v1")
 
+    # ------------------------------------------------------------------
     def status(self) -> dict:
         return {
-            "provider": self.provider,
-            "ollama_ready": self._probe_ollama(),
-            "openai_ready": bool(self.openai_key),
-            "anthropic_ready": bool(self.anthropic_key),
-            "groq_ready": bool(self.groq_key),
-            "emergent_ready": bool(self.emergent_key),
+            "mode": MODE.state.mode,
+            "real_enabled": MODE.can_use_real_llm(),
+            "emergent_key_present": bool(self.emergent_key),
+            "sdk_installed": HAS_EMERGENT,
+            "available_providers": (
+                ["openai", "anthropic", "gemini"]
+                if HAS_EMERGENT and self.emergent_key
+                else []
+            ),
+            "default_models": DEFAULT_MODELS,
             "fallback": "sim",
         }
 
-    def _probe_ollama(self) -> bool:
-        if not HAS_HTTPX:
-            return False
-        try:
-            with httpx.Client(timeout=0.35) as c:
-                r = c.get(self.ollama_url.replace("/v1", "") + "/api/tags")
-                return r.status_code == 200
-        except Exception:
-            return False
-
-    def generate(self, prompt: str, network: str, niche: str) -> dict:
-        """Return a dict {content, quality, provider, latency_ms}. Falls back to
-        deterministic synthesis if no provider is reachable."""
+    # ------------------------------------------------------------------
+    async def generate(
+        self,
+        prompt: str,
+        network: str,
+        niche_label: str,
+        *,
+        provider: str = "openai",
+        model: Optional[str] = None,
+    ) -> dict:
+        """Return a dict {content, quality, provider, model, latency_ms,
+        source}. `source` is 'sim' or 'real'."""
         t0 = time.time()
+
         content: Optional[str] = None
-        used = self.provider
+        used_provider = provider
+        used_model = model or DEFAULT_MODELS.get(provider, "gpt-5.4")
+        source = "sim"
 
-        # We do not block the server on network calls; sim is always the
-        # deterministic path so the sandbox works out-of-the-box.
-        if self.provider == "sim":
-            content = self._sim_generate(prompt, network, niche)
+        if MODE.can_use_real_llm() and HAS_EMERGENT and self.emergent_key:
+            try:
+                content = await self._call_emergent(
+                    prompt, network, niche_label, provider, used_model
+                )
+                source = "real"
+            except Exception as e:
+                # any failure gracefully falls back — sandbox never breaks
+                print(f"[llm] real provider failed, falling back: {e}")
+                content = None
 
-        # Any real integration would be added here. For MVP we hand back the
-        # sim output so the sandbox is fully operational without keys.
         if content is None:
-            content = self._sim_generate(prompt, network, niche)
-            used = "sim"
+            content = self._sim_generate(prompt, network, niche_label)
+            used_provider = "sim"
+            used_model = "deterministic-hook-v1"
 
-        quality = self._score(content, network, niche)
+        quality = self._score(content, network, niche_label)
         return {
-            "content": content,
+            "content": content.strip(),
             "quality": round(quality, 3),
-            "provider": used,
+            "provider": used_provider,
+            "model": used_model,
+            "source": source,
             "latency_ms": int((time.time() - t0) * 1000),
         }
 
+    async def _call_emergent(
+        self, prompt: str, network: str, niche_label: str,
+        provider: str, model: str,
+    ) -> str:
+        chat = LlmChat(
+            api_key=self.emergent_key,
+            session_id=f"opendroid-{uuid.uuid4().hex[:10]}",
+            system_message=_system_prompt(network, niche_label),
+        ).with_model(provider, model)
+        result = await chat.send_message(UserMessage(text=prompt))
+        # result may be a str or an object depending on SDK version
+        if isinstance(result, str):
+            return result
+        return getattr(result, "content", str(result))
+
     # ------------------------------------------------------------------
-    # deterministic sandbox synthesis
-    # ------------------------------------------------------------------
-    def _sim_generate(self, prompt: str, network: str, niche: str) -> str:
-        seed = prompt or "growth"
+    def _sim_generate(self, prompt: str, network: str, niche_label: str) -> str:
+        seed = (prompt or "growth").strip()
         openers = [
-            f"[{network.upper()} DROP] {seed[:60]}",
-            f"Playbook v{random.randint(2,9)}.{random.randint(0,9)} — {seed[:48]}",
-            f"Field report • {niche} • {seed[:52]}",
+            f"[{network.upper()}] {seed[:70]}",
+            f"Playbook v{random.randint(2,9)}.{random.randint(0,9)} — {seed[:52]}",
+            f"Field report • {niche_label} • {seed[:58]}",
         ]
         tails = [
             "→ tap the pinned comment for the funnel.",
@@ -101,18 +151,18 @@ class LLMGateway:
         ]
         return f"{random.choice(openers)} {random.choice(tails)}"
 
-    def _score(self, content: str, network: str, niche: str) -> float:
-        # very fast heuristic that mimics a "Hook Score" grader
+    def _score(self, content: str, network: str, niche_label: str) -> float:
         length_bonus = min(len(content) / 220, 1.0)
         specificity = sum(c.isdigit() for c in content) / 12
         cliche_penalty = 0.0
-        for w in ("game-changer", "revolutionary", "leverage synergies", "10x"):
+        for w in ("game-changer", "revolutionary", "leverage synergies",
+                  "10x", "unlock", "crushing it"):
             if w in content.lower():
                 cliche_penalty += 0.12
         base = 0.35 + 0.35 * length_bonus + 0.4 * min(specificity, 1.0)
         base -= cliche_penalty
         if network == "linkedin" and cliche_penalty > 0:
-            base -= 0.15  # extra LinkedIn cliche filter
+            base -= 0.15
         return max(0.05, min(0.99, base + random.uniform(-0.05, 0.05)))
 
 

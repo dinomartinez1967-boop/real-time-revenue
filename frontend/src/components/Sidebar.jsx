@@ -84,36 +84,45 @@ export default function Sidebar({
                 <div className="od-label mb-2">llm gateway</div>
                 <div className="flex items-center justify-between text-xs">
                     <span className="od-mono text-[color:var(--od-text-dim)]">
-                        provider
+                        source
                     </span>
-                    <span className="od-mono od-glow-cyan uppercase">
-                        {llmStatus?.provider || "sim"}
+                    <span
+                        className="od-mono uppercase"
+                        style={{
+                            color: llmStatus?.real_enabled
+                                ? "var(--od-cyan)"
+                                : "var(--od-green)",
+                        }}
+                    >
+                        {llmStatus?.real_enabled ? "real" : "sim"}
                     </span>
                 </div>
-                <div className="mt-2 grid grid-cols-2 gap-1 text-[10px] od-mono">
-                    <StatusPill label="ollama" ok={llmStatus?.ollama_ready} />
-                    <StatusPill label="openai" ok={llmStatus?.openai_ready} />
-                    <StatusPill label="claude" ok={llmStatus?.anthropic_ready} />
-                    <StatusPill label="groq" ok={llmStatus?.groq_ready} />
+                <div className="mt-2 od-ticker">
+                    key:{" "}
+                    <span
+                        className={
+                            llmStatus?.emergent_key_present
+                                ? "od-glow-cyan"
+                                : "text-[color:var(--od-text-dim)]"
+                        }
+                    >
+                        {llmStatus?.emergent_key_present ? "present" : "absent"}
+                    </span>
+                </div>
+                <div className="od-ticker mt-0.5">
+                    mode:{" "}
+                    <span
+                        style={{
+                            color:
+                                llmStatus?.mode === "graduated"
+                                    ? "#ffb454"
+                                    : "var(--od-green)",
+                        }}
+                    >
+                        {llmStatus?.mode || "sandbox"}
+                    </span>
                 </div>
             </div>
         </aside>
-    );
-}
-
-function StatusPill({ label, ok }) {
-    return (
-        <div
-            className="flex items-center gap-1.5 px-1.5 py-1 border border-[color:var(--od-border)] rounded-sm"
-            title={ok ? "reachable" : "no key / offline"}
-        >
-            <span
-                className={"od-diode " + (ok ? "" : "amber")}
-                style={{ width: 5, height: 5 }}
-            />
-            <span className="text-[color:var(--od-text-dim)] uppercase">
-                {label}
-            </span>
-        </div>
     );
 }

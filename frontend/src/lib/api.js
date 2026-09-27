@@ -4,46 +4,41 @@ const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
 export const api = axios.create({ baseURL: API, timeout: 15000 });
 
-export async function fetchState() {
-    const { data } = await api.get("/state");
-    return data;
-}
+export const fetchState = () => api.get("/state").then((r) => r.data);
+export const fetchNetworks = () => api.get("/networks").then((r) => r.data);
+export const fetchNiches = () => api.get("/niches").then((r) => r.data);
+export const fetchFeed = (n) => api.get(`/feed/${n}`).then((r) => r.data);
+export const setNiche = (key) =>
+    api.post("/niche", { key }).then((r) => r.data);
+export const publishPost = (network, prompt, useLlm = true, provider = "openai") =>
+    api.post("/agents/publish", { network, prompt, use_llm: useLlm, provider }).then(
+        (r) => r.data,
+    );
+export const flushSandbox = () => api.post("/sandbox/flush").then((r) => r.data);
+export const llmStatus = () => api.get("/llm/status").then((r) => r.data);
 
-export async function fetchNetworks() {
-    const { data } = await api.get("/networks");
-    return data;
-}
+// Mode + safety
+export const fetchMode = () => api.get("/mode").then((r) => r.data);
+export const setMode = (mode) => api.post("/mode", { mode }).then((r) => r.data);
+export const armDriver = (driver, on) =>
+    api.post("/drivers/arm", { driver, on }).then((r) => r.data);
+export const driversStatus = () =>
+    api.get("/drivers/status").then((r) => r.data);
+export const routeOrder = (payload) =>
+    api.post("/drivers/dropdashin/order", payload).then((r) => r.data);
+export const publishListing = (payload) =>
+    api.post("/drivers/facebook/listing", payload).then((r) => r.data);
 
-export async function fetchNiches() {
-    const { data } = await api.get("/niches");
-    return data;
-}
+// Swarm
+export const listAgents = () =>
+    api.get("/swarm/agents").then((r) => r.data);
+export const spawnAgent = (body) =>
+    api.post("/swarm/agents", body).then((r) => r.data);
+export const stopAgent = (id) =>
+    api.delete(`/swarm/agents/${id}`).then((r) => r.data);
+export const stopAllAgents = () =>
+    api.post("/swarm/stop_all").then((r) => r.data);
 
-export async function fetchFeed(network) {
-    const { data } = await api.get(`/feed/${network}`);
-    return data;
-}
-
-export async function setNiche(key) {
-    const { data } = await api.post("/niche", { key });
-    return data;
-}
-
-export async function publishPost(network, prompt, useLlm = true) {
-    const { data } = await api.post("/agents/publish", {
-        network,
-        prompt,
-        use_llm: useLlm,
-    });
-    return data;
-}
-
-export async function flushSandbox() {
-    const { data } = await api.post("/sandbox/flush");
-    return data;
-}
-
-export async function llmStatus() {
-    const { data } = await api.get("/llm/status");
-    return data;
-}
+// History
+export const fetchHistory = (limit = 200) =>
+    api.get(`/analytics/history?limit=${limit}`).then((r) => r.data);
