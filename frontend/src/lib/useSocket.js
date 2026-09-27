@@ -1,13 +1,22 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useCallback } from "react";
 
 /**
- * Small hook that opens a WebSocket to the backend and passes every JSON
- * message to `onMessage`. Reconnects with light exponential backoff.
+ * WebSocket hook with light exponential backoff. Errors are logged to the
+ * console (never silently swallowed) but do not throw — the reconnect loop
+ * is the recovery path.
  */
 export function useSocket(pathOrUrl, onMessage) {
     const wsRef = useRef(null);
     const attemptRef = useRef(0);
+    const onMessageRef = useRef(onMessage);
     const [connected, setConnected] = useState(false);
+
+    // Keep the latest onMessage without retriggering the connect effect
+    useEffect(() => {
+        onMessageRef.current = onMessage;
+    }, [onMessage]);
+
+    const connectRef = useRef(null);
 
     useEffect(() => {
         let cancelled = false;
@@ -16,9 +25,18 @@ export function useSocket(pathOrUrl, onMessage) {
         function connect() {
             const base = process.env.REACT_APP_BACKEND_URL || "";
             const wsBase = base.replace(/^http/, "ws");
-            const url = pathOrUrl.startsWith("ws") ? pathOrUrl : `${wsBase}${pathOrUrl}`;
+            const url = pathOrUrl.startsWith("ws")
+                ? pathOrUrl
+                : `${wsBase}${pathOrUrl}`;
 
-            const ws = new WebSocket(url);
+            let ws;
+            try {
+                ws = new WebSocket(url);
+            } catch (err) {
+                console.error("[useSocket] failed to open", url, err);
+                schedule();
+                return;
+            }
             wsRef.current = ws;
 
             ws.onopen = () => {
@@ -27,39 +45,46 @@ export function useSocket(pathOrUrl, onMessage) {
             };
             ws.onmessage = (evt) => {
                 try {
-                    const data = JSON.parse(evt.data);
-                    onMessage?.(data);
-                } catch {
-                    /* ignore */
+                    onMessageRef.current?.(JSON.parse(evt.data));
+                } catch (err) {
+                    console.warn("[useSocket] bad payload", err);
                 }
             };
-            ws.onclose = () => {
+            ws.onclose = (evt) => {
                 setConnected(false);
-                if (cancelled) return;
-                const delay = Math.min(4000, 500 * 2 ** attemptRef.current);
-                attemptRef.current += 1;
-                timer = setTimeout(connect, delay);
+                if (evt.code >= 4000) {
+                    console.warn("[useSocket] closed", evt.code, evt.reason);
+                }
+                if (!cancelled) schedule();
             };
-            ws.onerror = () => {
+            ws.onerror = (err) => {
+                console.debug("[useSocket] error, will reconnect", err);
                 try {
                     ws.close();
-                } catch {
-                    /* ignore */
+                } catch (closeErr) {
+                    console.debug("[useSocket] close after error failed", closeErr);
                 }
             };
         }
 
+        function schedule() {
+            const delay = Math.min(4000, 500 * 2 ** attemptRef.current);
+            attemptRef.current += 1;
+            timer = setTimeout(connect, delay);
+        }
+
+        connectRef.current = connect;
         connect();
+
         return () => {
             cancelled = true;
             if (timer) clearTimeout(timer);
             try {
                 wsRef.current?.close();
-            } catch {
-                /* ignore */
+            } catch (err) {
+                console.debug("[useSocket] cleanup close failed", err);
             }
         };
-        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [pathOrUrl]);
 
     return { connected };

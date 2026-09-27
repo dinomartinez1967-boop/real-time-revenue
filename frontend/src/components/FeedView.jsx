@@ -21,8 +21,8 @@ export default function FeedView({ network, netMeta, snapshotNet, dropdashin, mo
             try {
                 const data = await fetchFeed(network);
                 if (alive) setFeed(data);
-            } catch {
-                /* ignore */
+            } catch (err) {
+                console.debug("[feed] pull failed", err);
             }
         }
         pull();

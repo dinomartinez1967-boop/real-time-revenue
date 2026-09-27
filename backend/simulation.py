@@ -261,170 +261,180 @@ class SandboxEngine:
         sim_hour = (time.time() / 10) % 24
         daypart = 0.75 + 0.55 * math.sin((sim_hour - 6) / 24 * 2 * math.pi)
 
-        tick_delta_earn = 0.0
-        tick_delta_imp = 0
-        tick_delta_click = 0
-        tick_delta_conv = 0
+        deltas = await self._tick_networks(niche, daypart)
+        drop_earn = self._tick_dropdashin(niche)
+        deltas["earn"] += drop_earn
 
+        self._commit_totals(deltas)
+        await self._emit_analytics_tick(deltas)
+
+    # ------------------------------------------------------------------
+    # Per-tick helpers (extracted from _tick for readability + testability)
+    # ------------------------------------------------------------------
+    async def _tick_networks(self, niche: dict, daypart: float) -> dict:
+        """Advance all 10 networks one second. Returns aggregated deltas."""
+        totals = {"earn": 0.0, "imp": 0, "click": 0, "conv": 0}
         for key, meta in NETWORKS.items():
             st = self.network_state[key]
             if st["banned"]:
-                # Reddit-style temp ban decays after ~15s
                 if random.random() < 0.06:
                     st["banned"] = False
                 continue
 
-            # Dynamic CPM & CTR based on niche + daypart + hook score
-            hook = st["hook_score"]
-            st["cpm"] = max(0.5, meta["base_cpm"] * niche["cpm_mult"] * daypart
-                            * (0.7 + hook * 0.9))
-            st["ctr"] = max(0.001, meta["base_ctr"] * niche["ctr_mult"]
-                            * (0.6 + hook * 1.1))
+            imp, clicks, conv, earn = self._network_step(key, meta, st, niche, daypart)
 
-            # Impressions this second — scales with virality & hook
-            base_imp = 40 + int(300 * meta["virality"] * hook)
-            imp = int(base_imp * random.uniform(0.7, 1.35))
-
-            # Ecommerce store doesn't earn from CPM — handled below
-            if meta.get("ecommerce"):
-                earn = 0.0
-            else:
-                earn = imp * (st["cpm"] / 1000.0)
-
-            clicks = int(imp * st["ctr"])
-            # Stochastic rounding so we don't lose fractional conversions
-            expected_conv = clicks * niche["conversion_rate"] * (0.6 + hook)
-            conv = int(expected_conv) + (
-                1 if random.random() < (expected_conv - int(expected_conv)) else 0
-            )
-            earn += conv * niche["product_value"] * 0.35  # affiliate cut
-
-            # Reddit ban risk
-            if meta.get("ban_risk") and hook < 0.35 and random.random() < meta["ban_risk"]:
-                st["banned"] = True
-                await self._emit_feed({
-                    "type": "ban",
-                    "network": key,
-                    "reason": "Karma_Filter_Threshold below limit — subreddit auto-mod strike",
-                    "ts": _now_iso(),
-                })
-
-            # LinkedIn cliche penalty naturally happens because quality feeds hook
-
+            await self._maybe_ban(key, meta, st)
             st["impressions"] += imp
             st["clicks"] += clicks
             st["conversions"] += conv
             st["earnings"] += earn
+            self._update_algo_vars(st, meta)
 
-            # Algo variables trend based on activity
-            for v in st["algo"]:
-                if v == "Hook_Time_MS":
-                    st["algo"][v] = 500 + hook * 2200
-                elif v == "AVD":
-                    st["algo"][v] = 30 + hook * 380
-                elif v == "Open_Rate":
-                    st["algo"][v] = 0.6 + hook * 0.35
-                elif v == "Churn_Rate":
-                    st["algo"][v] = max(0.01, 0.15 - hook * 0.12)
-                elif v == "Velocity_Score":
-                    st["algo"][v] = hook * random.uniform(0.8, 1.2)
-                elif v == "Product_Saturation_Index":
-                    st["algo"][v] = min(0.98, 0.4 + math.sin(self.tick / 40) * 0.3 + 0.2)
-                elif v == "AI_Description_Conversion_Vector":
-                    st["algo"][v] = 0.8 + hook * 0.6
-                elif v == "Supplier_Latency_MS":
-                    st["algo"][v] = 220 + random.randint(0, 480)
-                elif v == "Cart_Abandonment_Rate":
-                    st["algo"][v] = max(0.15, 0.55 - hook * 0.25)
-                else:
-                    st["algo"][v] = round(random.uniform(0.4, 1.0) * (0.6 + hook), 2)
+            totals["earn"] += earn
+            totals["imp"] += imp
+            totals["click"] += clicks
+            totals["conv"] += conv
 
-            tick_delta_earn += earn
-            tick_delta_imp += imp
-            tick_delta_click += clicks
-            tick_delta_conv += conv
-
-            # Every ~8 seconds, drop a synthetic comment on the freshest post
             if self.feeds[key] and self.tick % random.randint(5, 11) == 0:
                 self._add_synthetic_comment(key)
-
-            # Every ~25 seconds an organic post from a synthetic author
             if self.tick % random.randint(20, 40) == 0:
                 new_post = self._spawn_post(key)
                 await self._emit_feed({
-                    "type": "post", "network": key, "post": new_post, "ts": _now_iso(),
+                    "type": "post", "network": key, "post": new_post,
+                    "ts": _now_iso(),
                 })
+        return totals
 
-        # ------------------------------------------------------------------
-        # Dropdashin ecommerce simulation — driven by traffic from all networks
-        # ------------------------------------------------------------------
+    def _network_step(self, key: str, meta: dict, st: dict, niche: dict,
+                      daypart: float) -> tuple[int, int, int, float]:
+        """Compute (imp, clicks, conv, earn) for a single network this tick."""
+        hook = st["hook_score"]
+        st["cpm"] = max(0.5, meta["base_cpm"] * niche["cpm_mult"] * daypart
+                        * (0.7 + hook * 0.9))
+        st["ctr"] = max(0.001, meta["base_ctr"] * niche["ctr_mult"]
+                        * (0.6 + hook * 1.1))
+        base_imp = 40 + int(300 * meta["virality"] * hook)
+        imp = int(base_imp * random.uniform(0.7, 1.35))
+        earn = 0.0 if meta.get("ecommerce") else imp * (st["cpm"] / 1000.0)
+        clicks = int(imp * st["ctr"])
+        # Stochastic rounding so we don't lose fractional conversions
+        expected_conv = clicks * niche["conversion_rate"] * (0.6 + hook)
+        conv = int(expected_conv) + (
+            1 if random.random() < (expected_conv - int(expected_conv)) else 0
+        )
+        earn += conv * niche["product_value"] * 0.35  # affiliate cut
+        return imp, clicks, conv, earn
+
+    async def _maybe_ban(self, key: str, meta: dict, st: dict) -> None:
+        if (
+            meta.get("ban_risk")
+            and st["hook_score"] < 0.35
+            and random.random() < meta["ban_risk"]
+        ):
+            st["banned"] = True
+            await self._emit_feed({
+                "type": "ban", "network": key,
+                "reason": "Karma_Filter_Threshold below limit — subreddit auto-mod strike",
+                "ts": _now_iso(),
+            })
+
+    def _update_algo_vars(self, st: dict, meta: dict) -> None:
+        hook = st["hook_score"]
+        for v in st["algo"]:
+            st["algo"][v] = self._algo_value(v, hook)
+
+    def _algo_value(self, name: str, hook: float) -> float:
+        if name == "Hook_Time_MS":
+            return 500 + hook * 2200
+        if name == "AVD":
+            return 30 + hook * 380
+        if name == "Open_Rate":
+            return 0.6 + hook * 0.35
+        if name == "Churn_Rate":
+            return max(0.01, 0.15 - hook * 0.12)
+        if name == "Velocity_Score":
+            return hook * random.uniform(0.8, 1.2)
+        if name == "Product_Saturation_Index":
+            return min(0.98, 0.4 + math.sin(self.tick / 40) * 0.3 + 0.2)
+        if name == "AI_Description_Conversion_Vector":
+            return 0.8 + hook * 0.6
+        if name == "Supplier_Latency_MS":
+            return 220 + random.randint(0, 480)
+        if name == "Cart_Abandonment_Rate":
+            return max(0.15, 0.55 - hook * 0.25)
+        return round(random.uniform(0.4, 1.0) * (0.6 + hook), 2)
+
+    def _tick_dropdashin(self, niche: dict) -> float:
+        """Advance the Dropdashin e-commerce sim. Returns earnings delta."""
         d = self.dropdashin
         ig_hook = self.network_state["instagram"]["hook_score"]
         tt_hook = self.network_state["tiktok"]["hook_score"]
         cross_traffic_hook = (ig_hook + tt_hook) / 2
-        potential_visitors = int(60 + 400 * cross_traffic_hook * random.uniform(0.6, 1.4))
-        buyers = int(potential_visitors * 0.028 * (0.5 + cross_traffic_hook))
-        abandoned = int(potential_visitors * 0.55 * (0.4 + (1 - cross_traffic_hook) * 0.6))
+        potential = int(60 + 400 * cross_traffic_hook * random.uniform(0.6, 1.4))
+        buyers = int(potential * 0.028 * (0.5 + cross_traffic_hook))
+        abandoned = int(potential * 0.55 * (0.4 + (1 - cross_traffic_hook) * 0.6))
         recovered = int(abandoned * 0.18 * cross_traffic_hook)
 
+        earn_delta = 0.0
         if buyers > 0 and d["stock"] > 0:
             buyers = min(buyers, d["stock"])
             d["stock"] -= buyers
             d["orders"] += buyers
             gross = buyers * d["product"]["retail"]
             cost = buyers * d["product"]["wholesale"]
-            ad_spend_this_tick = potential_visitors * 0.008 * niche["cpm_mult"]
+            ad_spend = potential * 0.008 * niche["cpm_mult"]
             d["gross_sales"] += gross
-            d["ad_spend"] += ad_spend_this_tick
-            d["net_profit"] += (gross - cost) - ad_spend_this_tick
+            d["ad_spend"] += ad_spend
+            d["net_profit"] += (gross - cost) - ad_spend
             for _ in range(min(3, buyers)):
                 d["recent_orders"].appendleft({
                     "id": uuid.uuid4().hex[:8].upper(),
                     "amount": d["product"]["retail"],
-                    "from": random.choice(["Instagram Reels", "TikTok Shop", "YouTube Desc",
-                                            "Threads", "X Post", "Reddit Thread"]),
+                    "from": random.choice([
+                        "Instagram Reels", "TikTok Shop", "YouTube Desc",
+                        "Threads", "X Post", "Reddit Thread",
+                    ]),
                     "ts": _now_iso(),
                 })
-            tick_delta_earn += (gross - cost) - ad_spend_this_tick
+            earn_delta = (gross - cost) - ad_spend
 
         d["cart_abandoned"] += abandoned
         d["cart_recovered"] += recovered
-
-        # Restock periodically
         if d["stock"] < 30 and self.tick % 15 == 0:
             d["stock"] += 200
+        return earn_delta
 
-        # ------------------------------------------------------------------
-        # Aggregate totals + time-series
-        # ------------------------------------------------------------------
-        self.total_earnings += tick_delta_earn
-        self.total_impressions += tick_delta_imp
-        self.total_clicks += tick_delta_click
-        self.total_conversions += tick_delta_conv
-
+    def _commit_totals(self, deltas: dict) -> None:
+        self.total_earnings += deltas["earn"]
+        self.total_impressions += deltas["imp"]
+        self.total_clicks += deltas["click"]
+        self.total_conversions += deltas["conv"]
         self.series.append({
             "t": self.tick,
-            "earnings_delta": round(tick_delta_earn, 2),
+            "earnings_delta": round(deltas["earn"], 2),
             "earnings_total": round(self.total_earnings, 2),
-            "imp_per_sec": tick_delta_imp,
-            "conv_rate": round(tick_delta_conv / max(1, tick_delta_click), 4),
+            "imp_per_sec": deltas["imp"],
+            "conv_rate": round(deltas["conv"] / max(1, deltas["click"]), 4),
         })
 
+    async def _emit_analytics_tick(self, deltas: dict) -> None:
         await self._emit_analytics({
             "type": "tick",
             "ts": _now_iso(),
             "delta": {
-                "earnings": round(tick_delta_earn, 2),
-                "impressions": tick_delta_imp,
-                "clicks": tick_delta_click,
-                "conversions": tick_delta_conv,
+                "earnings": round(deltas["earn"], 2),
+                "impressions": deltas["imp"],
+                "clicks": deltas["click"],
+                "conversions": deltas["conv"],
             },
             "totals": {
                 "earnings": round(self.total_earnings, 2),
                 "impressions": self.total_impressions,
                 "clicks": self.total_clicks,
                 "conversions": self.total_conversions,
-                "conv_rate": round(self.total_conversions / max(1, self.total_clicks), 4),
+                "conv_rate": round(
+                    self.total_conversions / max(1, self.total_clicks), 4
+                ),
             },
             "networks": self.snapshot_networks(),
             "dropdashin": {

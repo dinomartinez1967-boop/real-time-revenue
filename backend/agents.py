@@ -89,6 +89,17 @@ class Agent:
         }
 
 
+@dataclass
+class SpawnConfig:
+    name: str
+    playbook: str
+    target_networks: list
+    tone: str = "punchy contrarian"
+    provider: str = "openai"
+    model: Optional[str] = None
+    cadence_s: int = 12
+
+
 class SwarmManager:
     def __init__(self) -> None:
         self.agents: dict[str, Agent] = {}
@@ -97,25 +108,27 @@ class SwarmManager:
     def list(self) -> list[dict]:
         return [a.to_dict() for a in self.agents.values()]
 
-    def spawn(self, *, name: str, playbook: str, target_networks: list,
-              tone: str = "punchy contrarian",
-              provider: str = "openai",
-              model: Optional[str] = None,
-              cadence_s: int = 12) -> Agent:
-        for n in target_networks:
+    def spawn(self, **kwargs) -> Agent:
+        """Spawn from either an unpacked SpawnConfig or matching kwargs.
+        Kept variadic so existing callers keep working."""
+        cfg = SpawnConfig(**{
+            k: v for k, v in kwargs.items()
+            if k in SpawnConfig.__dataclass_fields__
+        })
+        for n in cfg.target_networks:
             if n not in NETWORKS:
                 raise ValueError(f"unknown network: {n}")
-        if provider not in DEFAULT_MODELS:
-            raise ValueError(f"unknown provider: {provider}")
+        if cfg.provider not in DEFAULT_MODELS:
+            raise ValueError(f"unknown provider: {cfg.provider}")
         agent = Agent(
             id=uuid.uuid4().hex[:10],
-            name=name.strip() or f"agent-{uuid.uuid4().hex[:4]}",
-            playbook=playbook.strip() or random.choice(PROMPT_LIBRARY),
-            target_networks=list(target_networks),
-            tone=tone,
-            provider=provider,
-            model=model or DEFAULT_MODELS[provider],
-            cadence_s=max(3, int(cadence_s)),
+            name=cfg.name.strip() or f"agent-{uuid.uuid4().hex[:4]}",
+            playbook=cfg.playbook.strip() or random.choice(PROMPT_LIBRARY),
+            target_networks=list(cfg.target_networks),
+            tone=cfg.tone,
+            provider=cfg.provider,
+            model=cfg.model or DEFAULT_MODELS[cfg.provider],
+            cadence_s=max(3, int(cfg.cadence_s)),
         )
         self.agents[agent.id] = agent
         agent._task = asyncio.create_task(self._run_agent(agent))

@@ -77,35 +77,43 @@ mongo_client = AsyncIOMotorClient(mongo_url)
 db = mongo_client[os.environ["DB_NAME"]]
 
 
+async def _prune_history() -> None:
+    """Keep the sandbox_history collection at ~1500 points."""
+    total = await db.sandbox_history.count_documents({})
+    if total <= 1500:
+        return
+    to_del = total - 1500
+    cursor = db.sandbox_history.find({}).sort("tick", 1).limit(to_del)
+    ids = [d["_id"] async for d in cursor]
+    if ids:
+        await db.sandbox_history.delete_many({"_id": {"$in": ids}})
+
+
+async def _persist_snapshot(snap: dict) -> None:
+    """Persist one snapshot: latest doc + history point."""
+    await db.sandbox_state.replace_one(
+        {"_id": "latest"}, {**snap, "_id": "latest"}, upsert=True
+    )
+    latest = snap["series"][-1] if snap["series"] else None
+    if not latest:
+        return
+    await db.sandbox_history.insert_one({
+        "ts": snap["ts"],
+        "tick": snap["tick"],
+        "niche": snap["niche"]["key"],
+        "mode": MODE.state.mode,
+        **latest,
+        "totals": snap["totals"],
+    })
+    await _prune_history()
+
+
 async def _snapshot_worker():
     """Persist a compact snapshot every 5s so revenue + traffic curves survive
     a page refresh or a server restart."""
     while True:
         try:
-            snap = ENGINE.snapshot()
-            # latest full snapshot
-            await db.sandbox_state.replace_one(
-                {"_id": "latest"}, {**snap, "_id": "latest"}, upsert=True
-            )
-            # rolling history — small time series doc per tick
-            latest = snap["series"][-1] if snap["series"] else None
-            if latest:
-                await db.sandbox_history.insert_one({
-                    "ts": snap["ts"],
-                    "tick": snap["tick"],
-                    "niche": snap["niche"]["key"],
-                    "mode": MODE.state.mode,
-                    **latest,
-                    "totals": snap["totals"],
-                })
-                # keep only last 1500 points (~2h)
-                total = await db.sandbox_history.count_documents({})
-                if total > 1500:
-                    to_del = total - 1500
-                    cursor = db.sandbox_history.find({}).sort("tick", 1).limit(to_del)
-                    ids = [d["_id"] async for d in cursor]
-                    if ids:
-                        await db.sandbox_history.delete_many({"_id": {"$in": ids}})
+            await _persist_snapshot(ENGINE.snapshot())
         except Exception as e:  # noqa
             logger.warning(f"snapshot failed: {e}")
         await asyncio.sleep(5)
@@ -258,22 +266,22 @@ async def get_mode():
 @api.post("/mode")
 async def set_mode(req: ModeRequest):
     try:
-        s = MODE.set_mode(req.mode)  # type: ignore[arg-type]
-    except ValueError as e:
-        raise HTTPException(400, str(e))
+        state = MODE.set_mode(req.mode)  # type: ignore[arg-type]
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
     # switching to sandbox stops the swarm too — safest default
     if req.mode == "sandbox":
         SWARM.stop_all()
-    return s.to_dict()
+    return state.to_dict()
 
 
 @api.post("/drivers/arm")
 async def arm_driver(req: ArmRequest):
     try:
-        s = MODE.arm_driver(req.driver, req.on)
-    except ValueError as e:
-        raise HTTPException(400, str(e))
-    return s.to_dict()
+        state = MODE.arm_driver(req.driver, req.on)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return state.to_dict()
 
 
 @api.get("/drivers/status")
@@ -306,7 +314,7 @@ async def list_agents():
 @api.post("/swarm/agents")
 async def spawn_agent(req: SpawnAgentRequest):
     try:
-        a = SWARM.spawn(
+        agent = SWARM.spawn(
             name=req.name,
             playbook=req.playbook,
             target_networks=req.target_networks,
@@ -315,9 +323,9 @@ async def spawn_agent(req: SpawnAgentRequest):
             model=req.model,
             cadence_s=req.cadence_s,
         )
-    except ValueError as e:
-        raise HTTPException(400, str(e))
-    return a.to_dict()
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return agent.to_dict()
 
 
 @api.delete("/swarm/agents/{agent_id}")
