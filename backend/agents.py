@@ -168,15 +168,14 @@ class SwarmManager:
                 agent.last_source = result["source"]
                 agent.last_quality = result["quality"]
 
-                # attribute earnings & impressions from this network's rate.
-                # We take a proportional slice: the agent gets credit for
-                # 1/(posts on this network) of the network's earnings delta
-                # over the last cadence — good enough for a live leaderboard.
+                # Attribute earnings from THIS post only — proportional to
+                # hook quality * network CPM * a synthetic reach factor.
+                # This keeps leaderboard rankings meaningful and prevents
+                # cumulative earnings from double-counting across agents.
                 snap = ENGINE.network_state[network]
-                agent.total_earnings += snap["earnings"] * 0.02
-                agent.total_impressions += int(
-                    snap["impressions"] * 0.02
-                )
+                reach = 800 + int(2400 * result["quality"])
+                agent.total_impressions += reach
+                agent.total_earnings += reach * (snap["cpm"] / 1000.0) * result["quality"]
             except asyncio.CancelledError:
                 break
             except Exception as e:  # noqa

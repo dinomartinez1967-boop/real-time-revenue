@@ -43,6 +43,23 @@ React Command Center via WebSocket. August 2026 growth-hacking trends.
 - ✅ Termux docs + 3 CLI scripts + Phantom Process Killer notes
 - ✅ 100% backend + 100% frontend smoke tests
 
+## Iteration 2 (2026-02)
+- ✅ **Sandbox / Graduated mode toggle** with hard safety rail
+  (sandbox force-disarms all real drivers and halts the swarm)
+- ✅ **Real LLM Brains** via Emergent Universal Key: GPT-5.4 / Claude
+  Sonnet 4.6 / Gemini 3.1 Pro. Only active when
+  mode=graduated + llm_real driver armed. Sandbox always uses `sim`.
+- ✅ **Multi-Agent Swarm** — spawn N agents with playbooks/tones/target-
+  networks/cadence/provider. Live leaderboard sorted by earnings.
+  Provider preselectable even in sandbox (kicks in on graduation).
+- ✅ **Analytics History** persisted to Mongo every 5s, capped at ~1500
+  points; loaded on Command Center mount so revenue/traffic curves
+  survive refresh.
+- ✅ **Production drivers**: `SupplierDriver`, `FacebookMarketplaceDriver`
+  — guarded stubs that return structured `not_armed` / `mocked` payloads
+  until real credentials are wired. Never side-effect in sandbox.
+- ✅ 17/17 backend + 100% frontend iteration-2 tests pass
+
 ## Backlog
 - P1: Bind real LLM providers end-to-end (Ollama/OpenAI/Anthropic/Groq)
 - P1: Persist historical time series and expose /api/analytics/history

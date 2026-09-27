@@ -172,11 +172,10 @@ export default function SwarmPanel({
                             className="bg-[color:var(--od-bg)] border border-[color:var(--od-border-hot)] px-2 py-1.5 od-mono text-xs rounded-sm"
                             value={provider}
                             onChange={(e) => setProvider(e.target.value)}
-                            disabled={!realLlm}
                             title={
                                 realLlm
                                     ? "real LLM brain"
-                                    : "sandbox / real-llm off — using deterministic sim"
+                                    : "sandbox / real-llm off — provider preselected, sim will be used until graduated + armed"
                             }
                         >
                             {PROVIDERS.map((p) => (
